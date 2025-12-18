@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: quiz-o-meter-prod
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: quiz-project
+  
+  source:
+    repoURL: 'https://github.com/YOUR_USERNAME/quiz-o-meter-infra.git'  # Replace
+    targetRevision: main  # Track main branch
+    path: k8s/overlays/prod
+  
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: quiz-prod
+  
+  # Sync policy - MANUAL for prod
+  syncPolicy:
+    # NO automated sync for production
+    # automated:
+    #   prune: false
+    #   selfHeal: true
+    
+    syncOptions:
+    - CreateNamespace=true
+    - PruneLast=true
+    
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/replicas
+  
+  revisionHistoryLimit: 10

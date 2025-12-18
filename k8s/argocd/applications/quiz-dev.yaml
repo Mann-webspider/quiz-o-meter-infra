@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: quiz-o-meter-dev
+  namespace: argocd
+  # Finalizer to ensure proper cleanup
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  # Project reference
+  project: quiz-project
+  
+  # Source repository configuration
+  source:
+    repoURL: 'https://github.com/YOUR_USERNAME/quiz-o-meter-infra.git'  # Replace
+    targetRevision: dev  # Track dev branch
+    path: k8s/overlays/dev  # Path to dev overlay
+  
+  # Destination cluster
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: quiz-dev
+  
+  # Sync policy - AUTOMATED for dev
+  syncPolicy:
+    automated:
+      prune: true        # Delete resources not in git
+      selfHeal: true     # Auto-sync if cluster state differs
+      allowEmpty: false  # Don't sync if no resources
+    
+    # Sync options
+    syncOptions:
+    - CreateNamespace=true  # Auto-create namespace
+    - PruneLast=true        # Delete resources last during sync
+    
+    # Retry configuration
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  # Ignore differences (for dynamic fields)
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/replicas  # Ignore if HPA changes replicas
+  
+  # Health check timeout
+  revisionHistoryLimit: 10

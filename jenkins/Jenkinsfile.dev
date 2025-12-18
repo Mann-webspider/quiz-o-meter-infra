@@ -1,0 +1,190 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins: agent
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: docker
+    image: docker:24-dind
+    command:
+    - cat
+    tty: true
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+    securityContext:
+      privileged: true
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - cat
+    tty: true
+  - name: git
+    image: alpine/git:latest
+    command:
+    - cat
+    tty: true
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
+'''
+        }
+    }
+    
+    environment {
+        // Docker registry (replace with your registry)
+        DOCKER_REGISTRY = 'docker.io'  // or your private registry
+        DOCKER_USERNAME = credentials('docker-username')
+        DOCKER_PASSWORD = credentials('docker-password')
+        
+        // Git repository
+        APP_REPO = 'https://github.com/YOUR_USERNAME/quiz-o-meter-app.git'
+        INFRA_REPO = 'https://github.com/YOUR_USERNAME/quiz-o-meter-infra.git'
+        GIT_CREDENTIALS = credentials('github-credentials')
+        
+        // Image tags
+        BUILD_TAG = "${env.BUILD_NUMBER}"
+        DEV_TAG = "dev-${env.BUILD_NUMBER}"
+    }
+    
+    stages {
+        stage('Checkout Application Code') {
+            steps {
+                container('git') {
+                    script {
+                        echo "📥 Cloning application repository..."
+                        sh '''
+                            git clone --branch dev ${APP_REPO} app
+                            cd app
+                            git log -1 --pretty=format:"%h - %s" > ../commit-info.txt
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Build Docker Images') {
+            parallel {
+                stage('Build Frontend') {
+                    steps {
+                        container('docker') {
+                            script {
+                                echo "🏗️ Building Frontend image..."
+                                sh '''
+                                    cd app/frontend
+                                    docker build -t ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:${DEV_TAG} .
+                                    docker tag ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:${DEV_TAG} \
+                                               ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:dev-latest
+                                '''
+                            }
+                        }
+                    }
+                }
+                
+                stage('Build Backend') {
+                    steps {
+                        container('docker') {
+                            script {
+                                echo "🏗️ Building Backend image..."
+                                sh '''
+                                    cd app/backend
+                                    docker build -t ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:${DEV_TAG} .
+                                    docker tag ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:${DEV_TAG} \
+                                               ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:dev-latest
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Push Images to Registry') {
+            steps {
+                container('docker') {
+                    script {
+                        echo "📤 Pushing images to registry..."
+                        sh '''
+                            echo ${DOCKER_PASSWORD} | docker login ${DOCKER_REGISTRY} -u ${DOCKER_USERNAME} --password-stdin
+                            
+                            # Push frontend
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:${DEV_TAG}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:dev-latest
+                            
+                            # Push backend
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:${DEV_TAG}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:dev-latest
+                            
+                            docker logout
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Update Kubernetes Manifests') {
+            steps {
+                container('git') {
+                    script {
+                        echo "📝 Updating K8s manifests..."
+                        sh '''
+                            # Clone infra repo
+                            git clone --branch dev ${INFRA_REPO} infra
+                            cd infra
+                            
+                            # Configure git
+                            git config user.email "jenkins@quiz-o-meter.com"
+                            git config user.name "Jenkins CI"
+                            
+                            # Update image tags in kustomization
+                            cd k8s/overlays/dev
+                            
+                            # Update frontend image
+                            sed -i "s|newTag:.*# frontend|newTag: ${DEV_TAG}  # frontend|" kustomization.yaml
+                            
+                            # Update backend image
+                            sed -i "s|newTag:.*# backend|newTag: ${DEV_TAG}  # backend|" kustomization.yaml
+                            
+                            # Commit and push
+                            git add kustomization.yaml
+                            git commit -m "Update dev images to build ${BUILD_TAG} [skip ci]"
+                            git push https://${GIT_CREDENTIALS_USR}:${GIT_CREDENTIALS_PSW}@github.com/YOUR_USERNAME/quiz-o-meter-infra.git dev
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Wait for ArgoCD Sync') {
+            steps {
+                script {
+                    echo "⏳ Waiting for ArgoCD to sync (auto-sync enabled)..."
+                    echo "Check ArgoCD UI for deployment status"
+                    echo "Application: quiz-o-meter-dev"
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '✅ Pipeline completed successfully!'
+            echo "Frontend: ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:${DEV_TAG}"
+            echo "Backend: ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:${DEV_TAG}"
+        }
+        failure {
+            echo '❌ Pipeline failed!'
+        }
+        always {
+            // Cleanup
+            cleanWs()
+        }
+    }
+}

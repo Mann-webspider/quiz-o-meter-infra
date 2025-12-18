@@ -1,0 +1,73 @@
+controller:
+  adminPassword: "ChangeMe123!"  # Change this!
+  
+  # Resource limits
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+  
+  # Install required plugins
+  installPlugins:
+    - kubernetes:latest
+    - workflow-aggregator:latest
+    - git:latest
+    - docker-workflow:latest
+    - configuration-as-code:latest
+    - blueocean:latest
+    - pipeline-stage-view:latest
+    - timestamper:latest
+    - ws-cleanup:latest
+  
+  # Jenkins Configuration as Code (JCasC)
+  JCasC:
+    configScripts:
+      welcome-message: |
+        jenkins:
+          systemMessage: "Quiz-O-Meter CI/CD Pipeline"
+      
+      kubernetes-cloud: |
+        jenkins:
+          clouds:
+            - kubernetes:
+                name: "kubernetes"
+                serverUrl: "https://kubernetes.default"
+                namespace: "jenkins"
+                jenkinsUrl: "http://jenkins:8080"
+                jenkinsTunnel: "jenkins-agent:50000"
+                containerCapStr: "10"
+                podLabels:
+                  - key: "jenkins"
+                    value: "agent"
+                templates:
+                  - name: "default"
+                    namespace: "jenkins"
+                    nodeUsageMode: NORMAL
+                    label: "jenkins-agent"
+                    containers:
+                      - name: "jnlp"
+                        image: "jenkins/inbound-agent:latest"
+                        workingDir: "/home/jenkins/agent"
+  
+  # Service configuration
+  serviceType: NodePort
+  nodePort: 32000
+  
+  # Ingress (optional)
+  ingress:
+    enabled: false
+    hostName: jenkins.your-domain.com
+
+# Persistence
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: "local-path"  # K3s default storage class
+
+# Service Account
+serviceAccount:
+  create: true
+  name: jenkins

@@ -1,0 +1,177 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins: agent
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: docker
+    image: docker:24-dind
+    command:
+    - cat
+    tty: true
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+    securityContext:
+      privileged: true
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - cat
+    tty: true
+  - name: git
+    image: alpine/git:latest
+    command:
+    - cat
+    tty: true
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
+'''
+        }
+    }
+    
+    environment {
+        DOCKER_REGISTRY = 'docker.io'
+        DOCKER_USERNAME = credentials('docker-username')
+        DOCKER_PASSWORD = credentials('docker-password')
+        
+        APP_REPO = 'https://github.com/YOUR_USERNAME/quiz-o-meter-app.git'
+        INFRA_REPO = 'https://github.com/YOUR_USERNAME/quiz-o-meter-infra.git'
+        GIT_CREDENTIALS = credentials('github-credentials')
+        
+        // Production uses semantic versioning
+        VERSION = "${params.VERSION}"  // e.g., v1.0.0
+    }
+    
+    parameters {
+        string(name: 'VERSION', defaultValue: 'v1.0.0', description: 'Semantic version (e.g., v1.0.0)')
+        booleanParam(name: 'CONFIRM_DEPLOY', defaultValue: false, description: 'Confirm production deployment?')
+    }
+    
+    stages {
+        stage('Pre-deployment Check') {
+            steps {
+                script {
+                    if (!params.CONFIRM_DEPLOY) {
+                        error("❌ Production deployment not confirmed!")
+                    }
+                    echo "✅ Production deployment confirmed for version ${VERSION}"
+                }
+            }
+        }
+        
+        stage('Checkout Application Code') {
+            steps {
+                container('git') {
+                    sh '''
+                        git clone --branch main ${APP_REPO} app
+                        cd app
+                        git log -1 --pretty=format:"%h - %s"
+                    '''
+                }
+            }
+        }
+        
+        stage('Build Production Images') {
+            parallel {
+                stage('Build Frontend') {
+                    steps {
+                        container('docker') {
+                            sh '''
+                                cd app/frontend
+                                docker build -t ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:${VERSION} \
+                                  --build-arg NODE_ENV=production .
+                                docker tag ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:${VERSION} \
+                                           ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:prod-latest
+                            '''
+                        }
+                    }
+                }
+                
+                stage('Build Backend') {
+                    steps {
+                        container('docker') {
+                            sh '''
+                                cd app/backend
+                                docker build -t ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:${VERSION} \
+                                  --build-arg NODE_ENV=production .
+                                docker tag ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:${VERSION} \
+                                           ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:prod-latest
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Push Production Images') {
+            steps {
+                container('docker') {
+                    sh '''
+                        echo ${DOCKER_PASSWORD} | docker login ${DOCKER_REGISTRY} -u ${DOCKER_USERNAME} --password-stdin
+                        
+                        docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:${VERSION}
+                        docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-frontend:prod-latest
+                        
+                        docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:${VERSION}
+                        docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/quiz-backend:prod-latest
+                        
+                        docker logout
+                    '''
+                }
+            }
+        }
+        
+        stage('Update Production Manifests') {
+            steps {
+                container('git') {
+                    sh '''
+                        git clone --branch main ${INFRA_REPO} infra
+                        cd infra
+                        
+                        git config user.email "jenkins@quiz-o-meter.com"
+                        git config user.name "Jenkins CI"
+                        
+                        cd k8s/overlays/prod
+                        
+                        sed -i "s|newTag:.*# frontend|newTag: ${VERSION}  # frontend|" kustomization.yaml
+                        sed -i "s|newTag:.*# backend|newTag: ${VERSION}  # backend|" kustomization.yaml
+                        
+                        git add kustomization.yaml
+                        git commit -m "Release ${VERSION} to production [skip ci]"
+                        git tag -a ${VERSION} -m "Production release ${VERSION}"
+                        git push https://${GIT_CREDENTIALS_USR}:${GIT_CREDENTIALS_PSW}@github.com/YOUR_USERNAME/quiz-o-meter-infra.git main --tags
+                    '''
+                }
+            }
+        }
+        
+        stage('Manual Approval for Deployment') {
+            steps {
+                script {
+                    echo "🎯 Ready to deploy ${VERSION} to production"
+                    echo "Please review in ArgoCD UI before syncing"
+                    echo "ArgoCD will show 'Out of Sync' - manually sync when ready"
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "✅ Production build completed: ${VERSION}"
+            echo "🚨 MANUAL STEP: Go to ArgoCD and sync quiz-o-meter-prod"
+        }
+        failure {
+            echo '❌ Production pipeline failed!'
+        }
+    }
+}

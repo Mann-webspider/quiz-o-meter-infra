@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: quiz-prod
+
+# Reference base manifests
+bases:
+  - ../../base/namespace
+  - ../../base/backend
+  - ../../base/frontend
+  - ../../base/redis
+
+# Resources specific to prod
+resources:
+  - ingress.yaml
+  - hpa-backend.yaml
+  - hpa-frontend.yaml
+
+# Patches to customize prod environment
+patchesStrategicMerge:
+  - patches/backend-config.yaml
+  - patches/frontend-config.yaml
+  - patches/backend-replicas.yaml
+  - patches/frontend-replicas.yaml
+  - patches/backend-resources.yaml
+  - patches/frontend-resources.yaml
+
+# Common labels for prod
+commonLabels:
+  environment: production
+  managed-by: argocd
+
+# Image tags (will be updated by CI/CD)
+images:
+  - name: backend
+    newName: your-registry.io/quiz-backend
+    newTag: v1.0.0  # Production uses versioned tags
+  - name: frontend
+    newName: your-registry.io/quiz-frontend
+    newTag: v1.0.0
+
+# Name prefix for all resources
+namePrefix: prod-
+
+# ConfigMap generator
+configMapGenerator:
+  - name: prod-env
+    literals:
+      - ENVIRONMENT=production
+      - DEBUG=false

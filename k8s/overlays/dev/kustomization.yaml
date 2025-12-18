@@ -1,0 +1,46 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: quiz-dev
+
+# Reference base manifests
+bases:
+  - ../../base/namespace
+  - ../../base/backend
+  - ../../base/frontend
+  - ../../base/redis
+
+# Resources specific to dev
+resources:
+  - ingress.yaml
+
+# Patches to customize dev environment
+patchesStrategicMerge:
+  - patches/backend-config.yaml
+  - patches/frontend-config.yaml
+  - patches/backend-replicas.yaml
+  - patches/frontend-replicas.yaml
+
+# Common labels for dev
+commonLabels:
+  environment: development
+  managed-by: argocd
+
+# Image tags (will be updated by CI/CD)
+images:
+  - name: backend
+    newName: your-registry.io/quiz-backend  # Replace with your registry
+    newTag: dev-latest
+  - name: frontend
+    newName: your-registry.io/quiz-frontend  # Replace with your registry
+    newTag: dev-latest
+
+# Name prefix for all resources
+namePrefix: dev-
+
+# ConfigMap generator for environment-specific values
+configMapGenerator:
+  - name: dev-env
+    literals:
+      - ENVIRONMENT=development
+      - DEBUG=true

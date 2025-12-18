@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quiz-dev
+  labels:
+    environment: development
+    app: quiz-o-meter

@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quiz-app-alerts
+  namespace: monitoring
+data:
+  quiz-alerts.yaml: |
+    groups:
+    - name: quiz-app-alerts
+      interval: 30s
+      rules:
+      
+      # Backend down alert
+      - alert: QuizBackendDown
+        expr: up{job=~".*backend.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: backend
+        annotations:
+          summary: "Quiz Backend is down"
+          description: "Backend pod {{ $labels.pod }} in {{ $labels.namespace }} has been down for more than 2 minutes."
+      
+      # Frontend down alert
+      - alert: QuizFrontendDown
+        expr: up{job=~".*frontend.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: frontend
+        annotations:
+          summary: "Quiz Frontend is down"
+          description: "Frontend pod {{ $labels.pod }} in {{ $labels.namespace }} has been down for more than 2 minutes."
+      
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: sum(rate(container_cpu_usage_seconds_total{namespace=~"quiz-dev|quiz-prod"}[5m])) by (pod) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "Pod {{ $labels.pod }} CPU usage is above 80% for more than 5 minutes."
+      
+      # High Memory usage
+      - alert: HighMemoryUsage
+        expr: sum(container_memory_working_set_bytes{namespace=~"quiz-dev|quiz-prod"}) by (pod) / sum(container_spec_memory_limit_bytes{namespace=~"quiz-dev|quiz-prod"}) by (pod) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Pod {{ $labels.pod }} memory usage is above 85% for more than 5 minutes."
+      
+      # Pod restart alert
+      - alert: PodRestartingFrequently
+        expr: rate(kube_pod_container_status_restarts_total{namespace=~"quiz-dev|quiz-prod"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pod restarting frequently"
+          description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} has restarted {{ $value }} times in the last 15 minutes."
+      
+      # Redis connection alert
+      - alert: RedisDown
+        expr: up{job=~".*redis.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Redis is down"
+          description: "Redis pod {{ $labels.pod }} has been down for more than 1 minute."
